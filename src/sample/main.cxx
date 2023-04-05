@@ -125,14 +125,27 @@ int main(int argc, char* argv[])
     SwapChain1->QueryInterface(IID_PPV_ARGS(&SwapChain));
     UINT BackbufferIndex = SwapChain->GetCurrentBackBufferIndex();
 
-    ID3D12CommandAllocator* CommandAllocator = 0;
-    Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocator));
+    ID3D12CommandAllocator* CommandAllocators[BACKBUFFER_COUNT] = {};
+    ID3D12GraphicsCommandList7* CommandLists[BACKBUFFER_COUNT] = {};
+    ID3D12CommandAllocator* BeginCommandAllocators[BACKBUFFER_COUNT] = {};
+    ID3D12GraphicsCommandList7* BeginCommandLists[BACKBUFFER_COUNT] = {};
+    ID3D12CommandAllocator* EndCommandAllocators[BACKBUFFER_COUNT] = {};
+    ID3D12GraphicsCommandList7* EndCommandLists[BACKBUFFER_COUNT] = {};
 
-    ID3D12GraphicsCommandList7* CommandList = 0;
-    Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-        CommandAllocator, 0,
-        IID_PPV_ARGS(&CommandList));
-    CommandList->Close();
+    for (int i = 0; i < BACKBUFFER_COUNT; i++)
+    {
+        Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[i]));
+        Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, CommandAllocators[i], 0, IID_PPV_ARGS(&CommandLists[i]));
+        CommandLists[i]->Close();
+
+        Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&BeginCommandAllocators[i]));
+        Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, BeginCommandAllocators[i], 0, IID_PPV_ARGS(&BeginCommandLists[i]));
+        BeginCommandLists[i]->Close();
+
+        Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&EndCommandAllocators[i]));
+        Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, EndCommandAllocators[i], 0, IID_PPV_ARGS(&EndCommandLists[i]));
+        EndCommandLists[i]->Close();
+    }
 
     //NOTE(chen): resources need descriptors as their handles
     //            descriptor heap is a space for placing descriptors
@@ -280,11 +293,45 @@ int main(int argc, char* argv[])
             DispatchMessage(&Message);
         }
 
+        if (FenceValue >= BACKBUFFER_COUNT && Fence->GetCompletedValue() < FenceValue - BACKBUFFER_COUNT)
+        {
+            Fence->SetEventOnCompletion(FenceValue, FenceEvent);
+            WaitForSingleObject(FenceEvent, INFINITE);
+        }
+
+        BackbufferIndex = SwapChain->GetCurrentBackBufferIndex();
+
+        auto BeginCommandAllocator = BeginCommandAllocators[FenceValue % BACKBUFFER_COUNT];
+        auto BeginCommandList = BeginCommandLists[FenceValue % BACKBUFFER_COUNT];
+        BeginCommandAllocator->Reset();
+        BeginCommandList->Reset(BeginCommandAllocator, 0);
+        auto EndCommandAllocator = EndCommandAllocators[FenceValue % BACKBUFFER_COUNT];
+        auto EndCommandList = EndCommandLists[FenceValue % BACKBUFFER_COUNT];
+        EndCommandAllocator->Reset();
+        EndCommandList->Reset(EndCommandAllocator, 0);
+        auto CommandAllocator = CommandAllocators[FenceValue % BACKBUFFER_COUNT];
+        auto CommandList = CommandLists[FenceValue % BACKBUFFER_COUNT];
         CommandAllocator->Reset();
         CommandList->Reset(CommandAllocator, 0);
 
         ID3D12Resource* Backbuffer = Backbuffers[BackbufferIndex];
         D3D12_CPU_DESCRIPTOR_HANDLE BackbufferDescriptor = BackbufferDescriptors[BackbufferIndex];
+
+        //D3D12_RESOURCE_BARRIER RenderBarrier = {};
+        //RenderBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        //RenderBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        //RenderBarrier.Transition.pResource = Backbuffer;
+        //RenderBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+        //RenderBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        //CommandList->ResourceBarrier(1, &RenderBarrier);
+
+        auto backBufferBeginBarrier = CD3DX12_TEXTURE_BARRIER(
+            D3D12_BARRIER_SYNC_DRAW, D3D12_BARRIER_SYNC_RENDER_TARGET,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE, D3D12_BARRIER_ACCESS_RENDER_TARGET,
+            D3D12_BARRIER_LAYOUT_COMMON, D3D12_BARRIER_LAYOUT_RENDER_TARGET, 
+            Backbuffer, CD3DX12_BARRIER_SUBRESOURCE_RANGE(0, 1, 0, 1));
+        auto beginBarrierGroup = CD3DX12_BARRIER_GROUP(1, &backBufferBeginBarrier);
+        BeginCommandList->Barrier(1, &beginBarrierGroup);
 
         // Begin render pass.
         float ClearColor[] = { 0.1f, 0.1f, 0.1f, 1.0f };
@@ -293,7 +340,10 @@ int main(int argc, char* argv[])
         D3D12_RENDER_PASS_BEGINNING_ACCESS beginAccess = D3D12_RENDER_PASS_BEGINNING_ACCESS{ D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR, { clearValue } };
         D3D12_RENDER_PASS_ENDING_ACCESS endAccess = D3D12_RENDER_PASS_ENDING_ACCESS{ D3D12_RENDER_PASS_ENDING_ACCESS_TYPE_PRESERVE, { } };
         D3D12_RENDER_PASS_RENDER_TARGET_DESC renderTargetDesc{ BackbufferDescriptor, beginAccess, endAccess };
-        CommandList->BeginRenderPass(1, &renderTargetDesc, nullptr, D3D12_RENDER_PASS_FLAG_NONE);
+        BeginCommandList->BeginRenderPass(1, &renderTargetDesc, nullptr, D3D12_RENDER_PASS_FLAG_SUSPENDING_PASS);
+        BeginCommandList->EndRenderPass();
+
+        CommandList->BeginRenderPass(1, &renderTargetDesc, nullptr, D3D12_RENDER_PASS_FLAG_SUSPENDING_PASS | D3D12_RENDER_PASS_FLAG_RESUMING_PASS);
 
         // Continue actual rendering.
         D3D12_VIEWPORT Viewport = {};
@@ -310,14 +360,6 @@ int main(int argc, char* argv[])
         CommandList->RSSetViewports(1, &Viewport);
         CommandList->RSSetScissorRects(1, &ScissorRect);
 
-        //D3D12_RESOURCE_BARRIER RenderBarrier = {};
-        //RenderBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        //RenderBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        //RenderBarrier.Transition.pResource = Backbuffer;
-        //RenderBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-        //RenderBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        //CommandList->ResourceBarrier(1, &RenderBarrier);
-
         //CommandList->OMSetRenderTargets(1, &BackbufferDescriptor, 0, 0);
         //float ClearColor[] = { 0.1f, 0.1f, 0.1f, 1.0f };
         //CommandList->ClearRenderTargetView(BackbufferDescriptor, ClearColor, 0, 0);
@@ -328,34 +370,36 @@ int main(int argc, char* argv[])
         // End render pass.
         CommandList->EndRenderPass();
 
+        EndCommandList->BeginRenderPass(1, &renderTargetDesc, nullptr, D3D12_RENDER_PASS_FLAG_RESUMING_PASS);
+        EndCommandList->EndRenderPass();
+
         //D3D12_RESOURCE_BARRIER PresentBarrier = {};
         //PresentBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         //PresentBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
         //PresentBarrier.Transition.pResource = Backbuffer;
         //PresentBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         //PresentBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-
         //CommandList->ResourceBarrier(1, &PresentBarrier);
+
+        auto backBufferEndBarrier = CD3DX12_TEXTURE_BARRIER(
+            D3D12_BARRIER_SYNC_RENDER_TARGET, D3D12_BARRIER_SYNC_PIXEL_SHADING, // Not sure about syncAfter, but D3D12_BARRIER_SYNC_NONE obviously does not work.
+            D3D12_BARRIER_ACCESS_RENDER_TARGET, D3D12_BARRIER_ACCESS_COMMON,
+            D3D12_BARRIER_LAYOUT_RENDER_TARGET, D3D12_BARRIER_LAYOUT_PRESENT,
+            Backbuffer, CD3DX12_BARRIER_SUBRESOURCE_RANGE(0, 1, 0, 1));
+        auto endBarrierGroup = CD3DX12_BARRIER_GROUP(1, &backBufferEndBarrier);
+        EndCommandList->Barrier(1, &endBarrierGroup);
+
+        BeginCommandList->Close();
         CommandList->Close();
+        EndCommandList->Close();
 
-        ID3D12CommandList* CommandLists[] = { CommandList };
-        CommandQueue->ExecuteCommandLists(1, CommandLists);
-
-        SwapChain->Present(1, 0);
-
-        //NOTE(chen): waiting until all the commands are executed,
-        //            effectively doing single buffering. It's inefficient
-        //            but simple and easy to understand.
+        ID3D12CommandList* CommandLists[] = { BeginCommandList, CommandList, EndCommandList };
+        CommandQueue->ExecuteCommandLists(3, CommandLists);
         FenceValue += 1;
         CommandQueue->Signal(Fence, FenceValue);
-        if (Fence->GetCompletedValue() < FenceValue)
-        {
-            Fence->SetEventOnCompletion(FenceValue, FenceEvent);
-            WaitForSingleObject(FenceEvent, INFINITE);
-        }
-        BackbufferIndex = SwapChain->GetCurrentBackBufferIndex();
 
-        Sleep(2);
+        SwapChain->Present(1, 0);
+        Sleep(0);
     }
 
     return 0;
