@@ -68,11 +68,30 @@ int main(int argc, char* argv[])
     //
     // D3D12 Init
 
+    IDXGIFactory7* Factory2 = 0;
+    CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&Factory2));
+
+    ID3D12Debug* DebugInterface;
+    ::D3D12GetDebugInterface(IID_PPV_ARGS(&DebugInterface));
+    DebugInterface->EnableDebugLayer();
+
     ID3D12Device10* Device = 0;
     D3D12CreateDevice(0, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&Device));
 
-    IDXGIFactory2* Factory2 = 0;
-    CreateDXGIFactory2(0, IID_PPV_ARGS(&Factory2));
+    ID3D12InfoQueue* InfoQueue = 0;
+    Device->QueryInterface(IID_PPV_ARGS(&InfoQueue));
+    InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+    InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+    InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
+    //InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_INFO, TRUE);
+    D3D12_MESSAGE_ID suppressIds[] = { D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE, D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE };
+    D3D12_MESSAGE_SEVERITY severities[] = { D3D12_MESSAGE_SEVERITY_INFO };
+    D3D12_INFO_QUEUE_FILTER infoQueueFilter = {};
+    infoQueueFilter.DenyList.NumIDs = _countof(suppressIds);
+    infoQueueFilter.DenyList.pIDList = suppressIds;
+    infoQueueFilter.DenyList.NumSeverities = _countof(severities);
+    infoQueueFilter.DenyList.pSeverityList = severities;
+    InfoQueue->PushStorageFilter(&infoQueueFilter);
 
     ID3D12CommandQueue* CommandQueue = 0;
     D3D12_COMMAND_QUEUE_DESC CommandQueueDesc = {};
@@ -291,13 +310,13 @@ int main(int argc, char* argv[])
         CommandList->RSSetViewports(1, &Viewport);
         CommandList->RSSetScissorRects(1, &ScissorRect);
 
-        D3D12_RESOURCE_BARRIER RenderBarrier = {};
-        RenderBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        RenderBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        RenderBarrier.Transition.pResource = Backbuffer;
-        RenderBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-        RenderBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        CommandList->ResourceBarrier(1, &RenderBarrier);
+        //D3D12_RESOURCE_BARRIER RenderBarrier = {};
+        //RenderBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        //RenderBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        //RenderBarrier.Transition.pResource = Backbuffer;
+        //RenderBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+        //RenderBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        //CommandList->ResourceBarrier(1, &RenderBarrier);
 
         //CommandList->OMSetRenderTargets(1, &BackbufferDescriptor, 0, 0);
         //float ClearColor[] = { 0.1f, 0.1f, 0.1f, 1.0f };
@@ -306,17 +325,17 @@ int main(int argc, char* argv[])
         CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         CommandList->DrawInstanced(3, 1, 0, 0);
 
-        D3D12_RESOURCE_BARRIER PresentBarrier = {};
-        PresentBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        PresentBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        PresentBarrier.Transition.pResource = Backbuffer;
-        PresentBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        PresentBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-
         // End render pass.
         CommandList->EndRenderPass();
 
-        CommandList->ResourceBarrier(1, &PresentBarrier);
+        //D3D12_RESOURCE_BARRIER PresentBarrier = {};
+        //PresentBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        //PresentBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        //PresentBarrier.Transition.pResource = Backbuffer;
+        //PresentBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        //PresentBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+
+        //CommandList->ResourceBarrier(1, &PresentBarrier);
         CommandList->Close();
 
         ID3D12CommandList* CommandLists[] = { CommandList };
