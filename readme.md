@@ -11,3 +11,5 @@ The debug layer will report the following error on the last barrier transitionin
 > D3D12 ERROR: ID3D12CommandList::Barrier: Resource last transitioned by legecy barrier must be in common state before switching to enhanced barriers. [ STATE_SETTING ERROR #1351: BARRIER_INTEROP_INVALID_STATE]
 
 This only happens in suspend/resume render pass scenarios - simple render passes work just fine. Also this only happens on swap chain back buffers. If another render target is used and resolved into the back buffer, no error is reported.
+
+As a (hopefully temporary) workaround, the error can be silenced by surpressing `D3D12_MESSAGE_ID_BARRIER_INTEROP_INVALID_STATE` on the info queue.
