@@ -13,3 +13,7 @@ The debug layer will report the following error on the last barrier transitionin
 This only happens in suspend/resume render pass scenarios - simple render passes work just fine. Also this only happens on swap chain back buffers. If another render target is used and resolved into the back buffer, no error is reported.
 
 As a (hopefully temporary) workaround, the error can be silenced by surpressing `D3D12_MESSAGE_ID_BARRIER_INTEROP_INVALID_STATE` on the info queue.
+
+## Update
+
+Issue is fixed with Agility SDK version 1.610.2. 
